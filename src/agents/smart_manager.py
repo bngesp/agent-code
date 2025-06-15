@@ -195,3 +195,4 @@ class SmartManager:
         result = crew.kickoff()
         
         return str(result)
+    
