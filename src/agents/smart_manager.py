@@ -1,5 +1,6 @@
 from crewai import Agent, Task, Crew
 from src.config.llm_config import get_llm
+from src.utils.file_writer import FileWriter
 import re
 import json
 from typing import List, Dict
@@ -8,6 +9,7 @@ class SmartManager:
     def __init__(self):
         self.llm = get_llm()
         self.manager_agent = self._create_manager_agent()
+        self.file_writer = FileWriter()
         
     def _create_manager_agent(self) -> Agent:
         return Agent(
@@ -150,9 +152,43 @@ class SmartManager:
             task_descriptions = spec.get("tasks", [f"Exécuter les tâches du rôle {role}"])
             
             for task_desc in task_descriptions:
+                enhanced_description = f"""
+                {task_desc}
+                
+                IMPORTANT: Votre réponse doit contenir du code prêt à être utilisé.
+                Formatez votre code dans des blocs avec le langage spécifié :
+                ```javascript
+                // Code JavaScript ici
+                ```
+                
+                ```python
+                # Code Python ici
+                ```
+                
+                Organisez votre réponse de manière structurée avec :
+                1. Description de la solution
+                2. Code source avec noms de fichiers explicites
+                3. Instructions d'installation/utilisation si nécessaire
+                
+                Exemple de format attendu:
+                ## app.js
+                ```javascript
+                const express = require('express');
+                // ... reste du code
+                ```
+                
+                ## package.json  
+                ```json
+                {{
+                  "name": "mon-projet",
+                  // ... reste de la configuration
+                }}
+                ```
+                """
+                
                 task = Task(
-                    description=task_desc,
-                    expected_output=f"Livrable de qualité professionnelle pour la tâche : {task_desc}",
+                    description=enhanced_description,
+                    expected_output=f"Code source fonctionnel et structuré pour : {task_desc}",
                     agent=agent
                 )
                 tasks.append(task)
@@ -161,6 +197,11 @@ class SmartManager:
     
     def execute_dynamic_project(self, user_prompt: str) -> str:
         print(f"🧠 Analyse du projet : {user_prompt}")
+        
+        # Préparer le répertoire de sortie
+        project_name = self._generate_project_name(user_prompt)
+        self.file_writer.set_project_directory(project_name)
+        print(f"📁 Répertoire de sortie créé : {self.file_writer.project_directory}")
         
         # 1. Analyser les besoins
         analysis_result = self.analyze_project_needs(user_prompt)
@@ -176,10 +217,16 @@ class SmartManager:
             print("⚠️ Aucun agent spécialisé requis, utilisation du manager seul")
             agents = [self.manager_agent]
             tasks = [Task(
-                description=f"Traiter intégralement le projet : {user_prompt}",
-                expected_output="Solution complète du projet",
+                description=f"""
+                Traiter intégralement le projet : {user_prompt}
+                
+                IMPORTANT: Votre réponse doit contenir du code prêt à être utilisé.
+                Formatez votre code dans des blocs avec le langage spécifié et les noms de fichiers.
+                """,
+                expected_output="Solution complète du projet avec code source structuré",
                 agent=self.manager_agent
             )]
+            agents_specs = [{"role": "Project Manager"}]
         else:
             agents = [self.manager_agent] + self.create_dynamic_agents(agents_specs)
             tasks = self.create_dynamic_tasks(agents[1:], agents_specs)
@@ -194,5 +241,42 @@ class SmartManager:
         print(f"🚀 Lancement de l'équipe de {len(agents)} agents")
         result = crew.kickoff()
         
+        # 5. Sauvegarder les résultats et extraire les fichiers de code
+        print(f"💾 Sauvegarde des fichiers générés...")
+        files_created = {}
+        
+        for task in tasks:
+            agent_role = task.agent.role
+            task_output = str(task.output) if hasattr(task, 'output') and task.output else ""
+            
+            if task_output:
+                created_files = self.file_writer.write_agent_output(agent_role, task_output)
+                files_created[agent_role] = created_files
+                print(f"✅ {len(created_files)} fichiers créés pour {agent_role}")
+        
+        # Si aucune sortie spécifique par tâche, utiliser le résultat global
+        if not files_created and result:
+            created_files = self.file_writer.write_agent_output("Combined_Output", str(result))
+            files_created["Combined_Output"] = created_files
+        
+        # 6. Créer le résumé du projet
+        agents_used = [agent.role for agent in agents]
+        self.file_writer.write_project_summary(project_name, agents_used, files_created)
+        
+        total_files = sum(len(files) for files in files_created.values())
+        print(f"🎉 Projet terminé ! {total_files} fichiers créés dans {self.file_writer.project_directory}")
+        
         return str(result)
+    
+    def _generate_project_name(self, user_prompt: str) -> str:
+        # Générer un nom de projet basé sur le prompt utilisateur
+        words = user_prompt.lower().split()
+        # Garder les mots significatifs et enlever les mots vides
+        stop_words = {'le', 'la', 'les', 'un', 'une', 'des', 'de', 'du', 'avec', 'pour', 'et', 'ou', 'dans', 'sur'}
+        meaningful_words = [word for word in words if word not in stop_words and len(word) > 2][:3]
+        
+        if meaningful_words:
+            return "_".join(meaningful_words)
+        else:
+            return "projet_agent"
     

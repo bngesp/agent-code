@@ -168,3 +168,4 @@ cython_debug/
 # Logs et cache
 *.log
 cache/
+output/
