@@ -6,12 +6,18 @@ from typing import Dict, List, Optional
 from datetime import datetime
 
 class FileWriter:
-    def __init__(self, output_directory: str = "output"):
-        self.output_directory = Path(output_directory)
-        self.output_directory.mkdir(exist_ok=True)
+    def __init__(self, output_directory: str = None):
+        if output_directory is None:
+            # Utiliser le répertoire courant par défaut
+            self.output_directory = Path.cwd()
+        else:
+            self.output_directory = Path(output_directory)
+        
+        # Ne pas créer automatiquement de sous-dossier "output"
         self.project_directory = None
         
     def set_project_directory(self, project_name: str):
+        # Créer un dossier avec le nom du projet et timestamp dans le répertoire courant
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.project_directory = self.output_directory / f"{project_name}_{timestamp}"
         self.project_directory.mkdir(exist_ok=True)
