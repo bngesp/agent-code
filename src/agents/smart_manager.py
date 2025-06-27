@@ -205,68 +205,69 @@ class SmartManager:
         
         # 1. Analyser les besoins
         analysis_result = self.analyze_project_needs(user_prompt)
-        print(f"📋 Analyse terminée")
+        print("📋 Analyse terminée")
         
         # 2. Parser le résultat
         parsed_analysis = self.parse_analysis_result(analysis_result)
-        print(f"🔍 {len(parsed_analysis.get('agents_needed', []))} agents identifiés")
+        
+        # Afficher le plan d'exécution
+        execution_plan = parsed_analysis.get("execution_plan", "Aucun plan d'exécution détaillé fourni.")
+        print("\n" + "="*70)
+        print("🎯 PLAN D'ÉXÉCUTION")
+        print("="*70)
+        print(execution_plan)
+        print("="*70 + "\n")
         
         # 3. Créer les agents dynamiquement
         agents_specs = parsed_analysis.get("agents_needed", [])
         if not agents_specs:
             print("⚠️ Aucun agent spécialisé requis, utilisation du manager seul")
-            agents = [self.manager_agent]
-            tasks = [Task(
-                description=f"""
-                Traiter intégralement le projet : {user_prompt}
-                
-                IMPORTANT: Votre réponse doit contenir du code prêt à être utilisé.
-                Formatez votre code dans des blocs avec le langage spécifié et les noms de fichiers.
-                """,
-                expected_output="Solution complète du projet avec code source structuré",
-                agent=self.manager_agent
-            )]
-            agents_specs = [{"role": "Project Manager"}]
-        else:
-            agents = [self.manager_agent] + self.create_dynamic_agents(agents_specs)
-            tasks = self.create_dynamic_tasks(agents[1:], agents_specs)
+            # ... (gestion du cas sans agent)
+            return "Aucun agent spécialisé n'a été jugé nécessaire pour ce projet."
+
+        agents = self.create_dynamic_agents(agents_specs)
+        tasks = self.create_dynamic_tasks(agents, agents_specs)
         
-        # 4. Exécuter le projet
-        crew = Crew(
-            agents=agents,
-            tasks=tasks, 
-            verbose=True
-        )
+        # 4. Exécuter le projet séquentiellement
+        print(f"🚀 Lancement de l'exécution séquentielle de {len(tasks)} tâches")
         
-        print(f"🚀 Lancement de l'équipe de {len(agents)} agents")
-        result = crew.kickoff()
-        
-        # 5. Sauvegarder les résultats et extraire les fichiers de code
-        print(f"💾 Sauvegarde des fichiers générés...")
-        files_created = {}
-        
-        for task in tasks:
+        execution_context = []
+        final_result = ""
+
+        for i, task in enumerate(tasks):
             agent_role = task.agent.role
-            task_output = str(task.output) if hasattr(task, 'output') and task.output else ""
+            print(f"\n" + "-"*70)
+            print(f"Étape {i+1}/{len(tasks)} : Exécution par {agent_role}")
+            print(f"Tâche : {task.description.split('IMPORTANT')[0].strip()}")
+            print("-" * 70)
+
+            # Injecter le contexte des tâches précédentes
+            if execution_context:
+                task.description = f"Contexte des étapes précédentes :\n{''.join(execution_context)}\n\n{task.description}"
+
+            # Exécuter la tâche
+            crew = Crew(agents=[task.agent], tasks=[task], verbose=False)
+            task_output = crew.kickoff()
             
-            if task_output:
-                created_files = self.file_writer.write_agent_output(agent_role, task_output)
-                files_created[agent_role] = created_files
-                print(f"✅ {len(created_files)} fichiers créés pour {agent_role}")
-        
-        # Si aucune sortie spécifique par tâche, utiliser le résultat global
-        if not files_created and result:
-            created_files = self.file_writer.write_agent_output("Combined_Output", str(result))
-            files_created["Combined_Output"] = created_files
+            # Sauvegarder le résultat de la tâche
+            execution_context.append(f"Résultat de {agent_role}:\n{task_output}\n")
+            final_result += f"--- Résultat de {agent_role} ---\n{task_output}\n\n"
+            
+            print(f"✅ Étape {i+1} terminée.")
+
+        # 5. Sauvegarder les résultats et extraire les fichiers de code
+        print("\n💾 Sauvegarde des fichiers générés...")
+        created_files = self.file_writer.write_agent_output("Combined_Output", final_result)
         
         # 6. Créer le résumé du projet
         agents_used = [agent.role for agent in agents]
-        self.file_writer.write_project_summary(project_name, agents_used, files_created)
+        files_created_summary = {"Combined_Output": created_files}
+        self.file_writer.write_project_summary(project_name, agents_used, files_created_summary)
         
-        total_files = sum(len(files) for files in files_created.values())
+        total_files = len(created_files)
         print(f"🎉 Projet terminé ! {total_files} fichiers créés dans {self.file_writer.project_directory}")
         
-        return str(result)
+        return final_result
     
     def _generate_project_name(self, user_prompt: str) -> str:
         # Générer un nom de projet basé sur le prompt utilisateur
